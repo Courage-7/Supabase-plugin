@@ -1,0 +1,10 @@
+[project]
+name = "superbase-connect"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "cryptography>=50.0.0",
+    "supabase>=2.31.0",
+]
