@@ -229,35 +229,45 @@ class SupabaseConnectionManager:
                 "The project URL contains an invalid port."
             ) from exc
 
-        hostname = parsed.hostname.lower().rstrip(".")
-        is_local = self._is_local_hostname(hostname)
+    def _validate_project_url_destination(
+        self, scheme: str, hostname: str, port: int | None
+    ) -> None:
+        if self._is_local_hostname(hostname):
+            self._validate_local_project_url(scheme)
+            return
 
-        if is_local:
-            if not self.allow_local_development:
-                raise SupabaseConnectionError(
-                    "Local Supabase URLs are disabled. Enable local development explicitly."
-                )
-            if parsed.scheme != "http":
-                raise SupabaseConnectionError("Local Supabase should use an http URL.")
-        else:
-            if parsed.scheme != "https":
-                raise SupabaseConnectionError("Hosted Supabase URLs must use HTTPS.")
-            is_supabase_hosted = hostname.endswith(".supabase.co")
-            if not is_supabase_hosted and not self.allow_custom_domains:
-                raise SupabaseConnectionError(
-                    "Only *.supabase.co URLs are allowed. Enable custom domains explicitly "
-                    "if your deployment requires them."
-                )
-            self._assert_public_destination(hostname, port or 443)
+        self._validate_hosted_project_url(scheme, hostname, port)
 
-        if port is not None and not (1 <= port <= 65535):
-            raise SupabaseConnectionError("The project URL contains an invalid port.")
+    def _validate_local_project_url(self, scheme: str) -> None:
+        if not self.allow_local_development:
+            raise SupabaseConnectionError(
+                "Local Supabase URLs are disabled. Enable local development explicitly."
+            )
+        if scheme != "http":
+            raise SupabaseConnectionError("Local Supabase should use an http URL.")
 
+    def _validate_hosted_project_url(
+        self, scheme: str, hostname: str, port: int | None
+    ) -> None:
+        if scheme != "https":
+            raise SupabaseConnectionError("Hosted Supabase URLs must use HTTPS.")
+
+        if not hostname.endswith(".supabase.co") and not self.allow_custom_domains:
+            raise SupabaseConnectionError(
+                "Only *.supabase.co URLs are allowed. Enable custom domains explicitly "
+                "if your deployment requires them."
+            )
+
+        self._assert_public_destination(hostname, port or 443)
+
+    def _build_normalized_project_url(
+        self, scheme: str, hostname: str, port: int | None
+    ) -> str:
         host = hostname
         if ":" in hostname and not hostname.startswith("["):
             host = f"[{hostname}]"
         netloc = f"{host}:{port}" if port else host
-        return urlunsplit((parsed.scheme, netloc, "", "", ""))
+        return urlunsplit((scheme, netloc, "", "", ""))
 
     @staticmethod
     def _decode_legacy_key_role(secret_key: str) -> str | None:
