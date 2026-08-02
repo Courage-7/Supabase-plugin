@@ -107,7 +107,7 @@ async def api() -> AsyncIterator[tuple[AsyncClient, FakeConnectionManager]]:
     app = create_app()
     manager = FakeConnectionManager()
 
-    async def override_connection_manager() -> FakeConnectionManager:
+    def override_connection_manager() -> FakeConnectionManager:
         return manager
 
     app.dependency_overrides[get_connection_manager] = override_connection_manager

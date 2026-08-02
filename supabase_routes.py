@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
 
 from supabase_connection_manager import (
+    CONNECTION_NOT_FOUND_MESSAGE,
     DEFAULT_DATABASE_PATH,
     ConnectionTestResult,
     SupabaseConnectionError,
@@ -71,7 +72,7 @@ def _build_connection_manager() -> SupabaseConnectionManager:
     return SupabaseConnectionManager(database_path)
 
 
-async def get_connection_manager() -> SupabaseConnectionManager:
+def get_connection_manager() -> SupabaseConnectionManager:
     """Build one process-local manager from backend environment settings."""
 
     try:
@@ -84,7 +85,7 @@ async def get_connection_manager() -> SupabaseConnectionManager:
     return manager
 
 
-async def get_workspace_id(
+def get_workspace_id(
     x_workspace_id: Annotated[str, Header(alias="X-Workspace-ID", min_length=1)],
 ) -> str:
     """Read the caller's workspace scope supplied by the trusted backend."""
@@ -124,7 +125,7 @@ def _raise_bad_request(exc: SupabaseConnectionError) -> NoReturn:
 
 
 @router.post("/test", response_model=ConnectionTestResponse)
-async def test_connection(
+def test_connection(
     request: ConnectionTestRequest,
     manager: ManagerDependency,
 ) -> ConnectionTestResponse:
@@ -141,7 +142,7 @@ async def test_connection(
 
 
 @router.post("", response_model=ConnectionResponse, status_code=status.HTTP_201_CREATED)
-async def create_connection(
+def create_connection(
     request: CreateConnectionRequest,
     workspace_id: WorkspaceDependency,
     manager: ManagerDependency,
@@ -162,7 +163,7 @@ async def create_connection(
 
 
 @router.get("", response_model=list[ConnectionResponse])
-async def list_connections(
+def list_connections(
     workspace_id: WorkspaceDependency,
     manager: ManagerDependency,
 ) -> list[ConnectionResponse]:
@@ -173,7 +174,7 @@ async def list_connections(
 
 
 @router.get("/{connection_id}", response_model=ConnectionResponse)
-async def get_connection(
+def get_connection(
     connection_id: str,
     workspace_id: WorkspaceDependency,
     manager: ManagerDependency,
@@ -188,13 +189,13 @@ async def get_connection(
     except SupabaseCredentialError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Supabase connection not found.",
+            detail=CONNECTION_NOT_FOUND_MESSAGE,
         ) from exc
     return _connection_response(record)
 
 
 @router.put("/{connection_id}/secret", response_model=ConnectionResponse)
-async def rotate_secret_key(
+def rotate_secret_key(
     connection_id: str,
     request: RotateSecretRequest,
     workspace_id: WorkspaceDependency,
@@ -211,7 +212,7 @@ async def rotate_secret_key(
     except SupabaseCredentialError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Supabase connection not found.",
+            detail=CONNECTION_NOT_FOUND_MESSAGE,
         ) from exc
     except SupabaseConnectionError as exc:
         _raise_bad_request(exc)

@@ -29,6 +29,8 @@ ENCRYPTION_KEY_ENV: Final = "WORKFLOW_CREDENTIAL_ENCRYPTION_KEY"
 DEFAULT_DATABASE_PATH: Final = Path("workflow_connections.db")
 DEFAULT_TIMEOUT_SECONDS: Final = 10.0
 PROVIDER: Final = "supabase"
+INVALID_PROJECT_PORT_MESSAGE: Final = "The project URL contains an invalid port."
+CONNECTION_NOT_FOUND_MESSAGE: Final = "Supabase connection not found."
 
 
 class SupabaseConnectionError(RuntimeError):
@@ -225,24 +227,24 @@ class SupabaseConnectionManager:
         try:
             port = parsed.port
         except ValueError as exc:
-            raise SupabaseConnectionError(
-                "The project URL contains an invalid port."
-            ) from exc
+            raise SupabaseConnectionError(INVALID_PROJECT_PORT_MESSAGE) from exc
 
         if port is not None and not (1 <= port <= 65535):
-            raise SupabaseConnectionError("The project URL contains an invalid port.")
+            raise SupabaseConnectionError(INVALID_PROJECT_PORT_MESSAGE)
 
         hostname = parsed.hostname.lower().rstrip(".")
         self._validate_project_url_destination(parsed.scheme, hostname, port)
         return self._build_normalized_project_url(parsed.scheme, hostname, port)
 
     def _validate_project_url_destination(
-        self, scheme: str, hostname: str, port: int | None
+        self,
+        scheme: str,
+        hostname: str,
+        port: int | None,
     ) -> None:
         if self._is_local_hostname(hostname):
             self._validate_local_project_url(scheme)
             return
-
         self._validate_hosted_project_url(scheme, hostname, port)
 
     def _validate_local_project_url(self, scheme: str) -> None:
@@ -254,21 +256,25 @@ class SupabaseConnectionManager:
             raise SupabaseConnectionError("Local Supabase should use an http URL.")
 
     def _validate_hosted_project_url(
-        self, scheme: str, hostname: str, port: int | None
+        self,
+        scheme: str,
+        hostname: str,
+        port: int | None,
     ) -> None:
         if scheme != "https":
             raise SupabaseConnectionError("Hosted Supabase URLs must use HTTPS.")
-
         if not hostname.endswith(".supabase.co") and not self.allow_custom_domains:
             raise SupabaseConnectionError(
                 "Only *.supabase.co URLs are allowed. Enable custom domains explicitly "
                 "if your deployment requires them."
             )
-
         self._assert_public_destination(hostname, port or 443)
 
+    @staticmethod
     def _build_normalized_project_url(
-        self, scheme: str, hostname: str, port: int | None
+        scheme: str,
+        hostname: str,
+        port: int | None,
     ) -> str:
         host = hostname
         if ":" in hostname and not hostname.startswith("["):
@@ -286,7 +292,7 @@ class SupabaseConnectionManager:
         try:
             padded = segments[1] + "=" * (-len(segments[1]) % 4)
             payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
-        except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+        except ValueError:
             return None
         role = payload.get("role")
         return role if isinstance(role, str) else None
@@ -320,6 +326,17 @@ class SupabaseConnectionManager:
             return f"sb_secret_…{secret_key[-4:]}"
         return f"service_role…{secret_key[-4:]}"
 
+    @staticmethod
+    def _create_ssl_context() -> ssl.SSLContext:
+        """Create a client context that authenticates TLS 1.2+ servers."""
+
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.verify_mode = ssl.CERT_REQUIRED
+        context.check_hostname = True
+        context.load_default_certs(purpose=ssl.Purpose.SERVER_AUTH)
+        return context
+
     def test_connection(
         self,
         project_url: str,
@@ -341,7 +358,7 @@ class SupabaseConnectionManager:
         )
         opener = urllib.request.build_opener(
             _NoRedirectHandler(),
-            urllib.request.HTTPSHandler(context=ssl.create_default_context()),
+            urllib.request.HTTPSHandler(context=self._create_ssl_context()),
         )
 
         try:
@@ -471,7 +488,7 @@ class SupabaseConnectionManager:
                 (connection_id, workspace_id, PROVIDER),
             ).fetchone()
         if row is None:
-            raise SupabaseCredentialError("Supabase connection not found.")
+            raise SupabaseCredentialError(CONNECTION_NOT_FOUND_MESSAGE)
         return SupabaseConnectionRecord(**dict(row))
 
     def list_connections(self, *, workspace_id: str) -> list[SupabaseConnectionRecord]:
@@ -508,7 +525,7 @@ class SupabaseConnectionManager:
                 (connection_id, workspace_id, PROVIDER),
             ).fetchone()
         if row is None:
-            raise SupabaseCredentialError("Supabase connection not found.")
+            raise SupabaseCredentialError(CONNECTION_NOT_FOUND_MESSAGE)
 
         try:
             secret_key = self._cipher.decrypt(row["encrypted_secret"]).decode("utf-8")
@@ -590,7 +607,7 @@ class SupabaseConnectionManager:
                 ),
             )
             if cursor.rowcount != 1:
-                raise SupabaseCredentialError("Supabase connection not found.")
+                raise SupabaseCredentialError(CONNECTION_NOT_FOUND_MESSAGE)
 
         return self.get_connection(connection_id, workspace_id=workspace_id)
 

@@ -19,7 +19,7 @@ def create_app() -> FastAPI:
     application.include_router(supabase_router)
 
     @application.get("/health", tags=["health"])
-    async def health() -> dict[str, str]:
+    def health() -> dict[str, str]:
         return {"status": "ok"}
 
     return application
