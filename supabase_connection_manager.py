@@ -229,6 +229,13 @@ class SupabaseConnectionManager:
                 "The project URL contains an invalid port."
             ) from exc
 
+        if port is not None and not (1 <= port <= 65535):
+            raise SupabaseConnectionError("The project URL contains an invalid port.")
+
+        hostname = parsed.hostname.lower().rstrip(".")
+        self._validate_project_url_destination(parsed.scheme, hostname, port)
+        return self._build_normalized_project_url(parsed.scheme, hostname, port)
+
     def _validate_project_url_destination(
         self, scheme: str, hostname: str, port: int | None
     ) -> None:

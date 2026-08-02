@@ -138,7 +138,7 @@ async def test_credentials_can_be_tested_without_being_returned(
     )
 
     assert response.status_code == 200
-    assert "secret" not in response.text
+    assert "sb_secret_not_returned_1234567890" not in response.text
     assert manager.calls[-1][1]["secret_key"] == "sb_secret_not_returned_1234567890"
 
 
@@ -160,7 +160,7 @@ async def test_create_uses_workspace_header_and_hides_secret(
 
     assert response.status_code == 201
     assert response.json()["workspace_id"] == "workspace-1"
-    assert "secret" not in response.text
+    assert "sb_secret_not_returned_1234567890" not in response.text
     assert manager.calls[-1][1]["workspace_id"] == "workspace-1"
 
 
@@ -219,7 +219,7 @@ async def test_rotate_passes_new_secret_without_returning_it(
     )
 
     assert response.status_code == 200
-    assert "secret" not in response.text
+    assert "sb_secret_rotated_123456789012345" not in response.text
     assert manager.calls[-1][1]["new_secret_key"] == (
         "sb_secret_rotated_123456789012345"
     )

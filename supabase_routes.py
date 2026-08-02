@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
-from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
-from functools import lru_cache, partial
-from typing import Annotated, Any, TypeVar
+from functools import lru_cache
+from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
@@ -24,11 +21,6 @@ from supabase_connection_manager import (
 
 
 DATABASE_PATH_ENV = "WORKFLOW_CONNECTION_DATABASE"
-ResultType = TypeVar("ResultType")
-_MANAGER_EXECUTOR = ThreadPoolExecutor(
-    max_workers=8,
-    thread_name_prefix="supabase-connections",
-)
 
 
 class RequestModel(BaseModel):
@@ -79,24 +71,11 @@ def _build_connection_manager() -> SupabaseConnectionManager:
     return SupabaseConnectionManager(database_path)
 
 
-async def _run_blocking(
-    function: Callable[..., ResultType],
-    /,
-    *args: Any,
-    **kwargs: Any,
-) -> ResultType:
-    """Run blocking SQLite and HTTP work outside the ASGI event loop."""
-
-    loop = asyncio.get_running_loop()
-    call = partial(function, *args, **kwargs)
-    return await loop.run_in_executor(_MANAGER_EXECUTOR, call)
-
-
 async def get_connection_manager() -> SupabaseConnectionManager:
     """Build one process-local manager from backend environment settings."""
 
     try:
-        manager = await _run_blocking(_build_connection_manager)
+        manager = _build_connection_manager()
     except SupabaseCredentialError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -137,7 +116,7 @@ def _connection_response(record: SupabaseConnectionRecord) -> ConnectionResponse
     return ConnectionResponse(**asdict(record))
 
 
-def _raise_bad_request(exc: SupabaseConnectionError) -> None:
+def _raise_bad_request(exc: SupabaseConnectionError) -> NoReturn:
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
         detail=str(exc),
@@ -152,8 +131,7 @@ async def test_connection(
     """Validate credentials without storing them."""
 
     try:
-        result = await _run_blocking(
-            manager.test_connection,
+        result = manager.test_connection(
             request.project_url,
             request.secret_key.get_secret_value(),
         )
@@ -171,8 +149,7 @@ async def create_connection(
     """Test, encrypt, and store a connection in one workspace."""
 
     try:
-        record = await _run_blocking(
-            manager.create_connection,
+        record = manager.create_connection(
             workspace_id=workspace_id,
             name=request.name,
             project_url=request.project_url,
@@ -191,10 +168,7 @@ async def list_connections(
 ) -> list[ConnectionResponse]:
     """List non-secret connection metadata for one workspace."""
 
-    records = await _run_blocking(
-        manager.list_connections,
-        workspace_id=workspace_id,
-    )
+    records = manager.list_connections(workspace_id=workspace_id)
     return [_connection_response(record) for record in records]
 
 
@@ -207,8 +181,7 @@ async def get_connection(
     """Return non-secret metadata for one workspace connection."""
 
     try:
-        record = await _run_blocking(
-            manager.get_connection,
+        record = manager.get_connection(
             connection_id,
             workspace_id=workspace_id,
         )
@@ -230,8 +203,7 @@ async def rotate_secret_key(
     """Test and replace a connection's secret without changing its ID."""
 
     try:
-        record = await _run_blocking(
-            manager.rotate_secret_key,
+        record = manager.rotate_secret_key(
             connection_id,
             workspace_id=workspace_id,
             new_secret_key=request.secret_key.get_secret_value(),
