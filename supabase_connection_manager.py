@@ -1,35 +1,4 @@
-"""Secure Supabase credential connections for a Python workflow backend.
-
-This module deliberately does not perform Supabase user login or OAuth. A user
-supplies a Supabase project URL and a server-side secret API key. The key is
-tested from the backend, encrypted at rest, and referenced by ``connection_id``
-from workflow definitions.
-
-The built-in SQLite repository is suitable for a local MVP. For a distributed
-deployment, keep the public API of ``SupabaseConnectionManager`` and replace the
-SQLite queries with your application's database repository or secret manager.
-
-Required dependency:
-
-    cryptography
-
-Optional dependency for ``get_supabase_client``:
-
-    supabase
-
-Quick start::
-
-    # Save this value in your backend secret manager or .env file.
-    python supabase_connection_manager.py generate-key
-    export WORKFLOW_CREDENTIAL_ENCRYPTION_KEY="<generated-value>"
-
-    python supabase_connection_manager.py test
-    python supabase_connection_manager.py add
-    python supabase_connection_manager.py list
-
-Never pass a Supabase secret key as a CLI argument because shell history may
-retain it. The CLI reads the key using a hidden prompt.
-"""
+"""Securely manage encrypted Supabase credentials for workflow backends."""
 
 from __future__ import annotations
 
