@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from getpass import getpass
 from pathlib import Path
 from typing import Any, Final
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import unquote, urlsplit, urlunsplit
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -28,6 +28,10 @@ from cryptography.fernet import Fernet, InvalidToken
 ENCRYPTION_KEY_ENV: Final = "WORKFLOW_CREDENTIAL_ENCRYPTION_KEY"
 DEFAULT_DATABASE_PATH: Final = Path("workflow_connections.db")
 DEFAULT_TIMEOUT_SECONDS: Final = 10.0
+MAX_OPENAPI_SPEC_BYTES: Final = 10 * 1024 * 1024
+OPENAPI_RESOURCE_OPERATIONS: Final = frozenset(
+    {"get", "head", "post", "put", "patch", "delete"}
+)
 PROVIDER: Final = "supabase"
 INVALID_PROJECT_PORT_MESSAGE: Final = "The project URL contains an invalid port."
 CONNECTION_NOT_FOUND_MESSAGE: Final = "Supabase connection not found."
@@ -400,6 +404,104 @@ class SupabaseConnectionManager:
             project_url=normalized_url,
             tested_at=tested_at,
         )
+
+    def list_tables(
+        self,
+        connection_id: str,
+        *,
+        workspace_id: str,
+    ) -> list[str]:
+        """List table-like resources exposed by the stored schema's Data API."""
+
+        credentials = self.get_credentials(
+            connection_id,
+            workspace_id=workspace_id,
+        )
+        request = urllib.request.Request(
+            f"{credentials.project_url}/rest/v1/",
+            method="GET",
+            headers={
+                "apikey": credentials.secret_key,
+                "Accept": "application/openapi+json",
+                "Accept-Profile": credentials.schema_name,
+                "User-Agent": "workflow-supabase-connector/1.0",
+            },
+        )
+        opener = urllib.request.build_opener(
+            _NoRedirectHandler(),
+            urllib.request.HTTPSHandler(context=self._create_ssl_context()),
+        )
+
+        try:
+            with opener.open(request, timeout=self.timeout_seconds) as response:
+                status_code = int(response.status)
+                payload = response.read(MAX_OPENAPI_SPEC_BYTES + 1)
+        except urllib.error.HTTPError as exc:
+            status_code = int(exc.code)
+            if 300 <= status_code < 400:
+                message = "Supabase redirected schema discovery; redirects are blocked."
+            elif status_code in {401, 403}:
+                message = "Supabase rejected the stored secret key."
+            elif status_code == 404:
+                message = "The Supabase Data API schema description was not found."
+            elif status_code == 406:
+                message = (
+                    f"The '{credentials.schema_name}' schema is not exposed "
+                    "through the Supabase Data API."
+                )
+            else:
+                message = (
+                    f"Supabase returned HTTP {status_code} while listing tables."
+                )
+            raise SupabaseConnectionError(message) from exc
+        except urllib.error.URLError as exc:
+            raise SupabaseConnectionError(
+                "The Supabase schema description could not be reached securely."
+            ) from exc
+        except TimeoutError as exc:
+            raise SupabaseConnectionError(
+                "The Supabase schema discovery request timed out."
+            ) from exc
+
+        if not 200 <= status_code < 300:
+            raise SupabaseConnectionError(
+                f"Unexpected HTTP {status_code} while listing Supabase tables."
+            )
+        if len(payload) > MAX_OPENAPI_SPEC_BYTES:
+            raise SupabaseConnectionError(
+                "The Supabase schema description is too large to process safely."
+            )
+
+        try:
+            specification = json.loads(payload)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise SupabaseConnectionError(
+                "Supabase returned an invalid schema description."
+            ) from exc
+
+        if not isinstance(specification, dict) or not isinstance(
+            specification.get("paths"), dict
+        ):
+            raise SupabaseConnectionError(
+                "Supabase returned an invalid schema description."
+            )
+
+        table_names: set[str] = set()
+        for path, path_item in specification["paths"].items():
+            if not isinstance(path, str) or not isinstance(path_item, dict):
+                continue
+            resource_name = path.removeprefix("/")
+            if (
+                not path.startswith("/")
+                or not resource_name
+                or resource_name.startswith("rpc/")
+                or "/" in resource_name
+                or not OPENAPI_RESOURCE_OPERATIONS.intersection(path_item)
+            ):
+                continue
+            table_names.add(unquote(resource_name))
+
+        return sorted(table_names, key=lambda name: (name.casefold(), name))
 
     def create_connection(
         self,

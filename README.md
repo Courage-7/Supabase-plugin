@@ -65,6 +65,22 @@ Listing, retrieving, and rotating stored connections continue to require the
 workspace header. If credential testing or storage configuration fails, the
 connection is not inserted.
 
+## List tables in the stored schema
+
+Use the connection ID and its workspace ID to discover the table-like resources
+exposed through the Supabase Data API:
+
+```http
+GET /api/v1/supabase/connections/connection-id/tables
+X-Workspace-ID: returned-workspace-id
+```
+
+The response includes the connection, workspace, and schema identifiers plus a
+sorted `tables` array. PostgREST exposes tables, foreign tables, and views through
+the same resource paths, so views can also appear in this list. RPC functions are
+excluded. Tables that exist in Postgres but are not exposed or granted to the
+stored key do not appear.
+
 ## Storage notes
 
 The default database path is `workflow_connections.db`, relative to the server's

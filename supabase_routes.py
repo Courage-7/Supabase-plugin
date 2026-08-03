@@ -67,6 +67,13 @@ class ConnectionResponse(BaseModel):
     updated_at: str
 
 
+class TableListResponse(BaseModel):
+    connection_id: str
+    workspace_id: str
+    schema_name: str
+    tables: list[str]
+
+
 @lru_cache(maxsize=1)
 def _build_connection_manager() -> SupabaseConnectionManager:
     database_path = os.getenv(DATABASE_PATH_ENV, str(DEFAULT_DATABASE_PATH))
@@ -211,6 +218,61 @@ def get_connection(
             detail=CONNECTION_NOT_FOUND_MESSAGE,
         ) from exc
     return _connection_response(record)
+
+
+@router.get(
+    "/{connection_id}/tables",
+    response_model=TableListResponse,
+    responses={
+        status.HTTP_404_NOT_FOUND: {"description": "Connection not found."},
+        status.HTTP_502_BAD_GATEWAY: {
+            "description": "Supabase schema discovery failed."
+        },
+        status.HTTP_503_SERVICE_UNAVAILABLE: {
+            "description": "Stored credential unavailable."
+        },
+    },
+)
+def list_connection_tables(
+    connection_id: str,
+    workspace_id: WorkspaceDependency,
+    manager: ManagerDependency,
+) -> TableListResponse:
+    """List table and view resources exposed by the stored Supabase schema."""
+
+    try:
+        metadata = manager.get_connection(
+            connection_id,
+            workspace_id=workspace_id,
+        )
+    except SupabaseCredentialError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=CONNECTION_NOT_FOUND_MESSAGE,
+        ) from exc
+
+    try:
+        tables = manager.list_tables(
+            connection_id,
+            workspace_id=workspace_id,
+        )
+    except SupabaseCredentialError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="The stored Supabase credential could not be loaded.",
+        ) from exc
+    except SupabaseConnectionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
+        ) from exc
+
+    return TableListResponse(
+        connection_id=metadata.id,
+        workspace_id=metadata.workspace_id,
+        schema_name=metadata.schema_name,
+        tables=tables,
+    )
 
 
 @router.put("/{connection_id}/secret", response_model=ConnectionResponse)

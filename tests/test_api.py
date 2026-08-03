@@ -13,6 +13,7 @@ from httpx2 import ASGITransport, AsyncClient
 from main import create_app
 from supabase_connection_manager import (
     ConnectionTestResult,
+    SupabaseConnectionError,
     SupabaseConnectionRecord,
     SupabaseConnectionManager,
     SupabaseCredentialError,
@@ -81,6 +82,24 @@ class FakeConnectionManager:
         if connection_id == "missing":
             raise SupabaseCredentialError("Supabase connection not found.")
         return replace(self.record, id=connection_id, workspace_id=workspace_id)
+
+    def list_tables(
+        self,
+        connection_id: str,
+        *,
+        workspace_id: str,
+    ) -> list[str]:
+        self.calls.append(
+            (
+                "list_tables",
+                {"connection_id": connection_id, "workspace_id": workspace_id},
+            )
+        )
+        if connection_id == "upstream-error":
+            raise SupabaseConnectionError("Supabase table discovery failed.")
+        if connection_id == "decrypt-error":
+            raise SupabaseCredentialError("Stored credential could not be decrypted.")
+        return ["customers", "orders"]
 
     def rotate_secret_key(
         self,
@@ -324,6 +343,86 @@ async def test_missing_connection_returns_404(
         headers=WORKSPACE_HEADERS,
     )
     assert response.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_list_tables_is_scoped_to_connection_workspace(
+    api: tuple[AsyncClient, FakeConnectionManager],
+) -> None:
+    client, manager = api
+    response = await client.get(
+        "/api/v1/supabase/connections/connection-1/tables",
+        headers=WORKSPACE_HEADERS,
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "connection_id": "connection-1",
+        "workspace_id": "workspace-1",
+        "schema_name": "public",
+        "tables": ["customers", "orders"],
+    }
+    assert manager.calls[-1] == (
+        "list_tables",
+        {"connection_id": "connection-1", "workspace_id": "workspace-1"},
+    )
+
+
+@pytest.mark.anyio
+async def test_list_tables_requires_workspace_header(
+    api: tuple[AsyncClient, FakeConnectionManager],
+) -> None:
+    client, manager = api
+    response = await client.get(
+        "/api/v1/supabase/connections/connection-1/tables"
+    )
+
+    assert response.status_code == 422
+    assert not any(call[0] == "list_tables" for call in manager.calls)
+
+
+@pytest.mark.anyio
+async def test_list_tables_maps_supabase_failure_to_bad_gateway(
+    api: tuple[AsyncClient, FakeConnectionManager],
+) -> None:
+    client, _ = api
+    response = await client.get(
+        "/api/v1/supabase/connections/upstream-error/tables",
+        headers=WORKSPACE_HEADERS,
+    )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "Supabase table discovery failed."
+
+
+@pytest.mark.anyio
+async def test_list_tables_maps_unreadable_credential_to_service_unavailable(
+    api: tuple[AsyncClient, FakeConnectionManager],
+) -> None:
+    client, _ = api
+    response = await client.get(
+        "/api/v1/supabase/connections/decrypt-error/tables",
+        headers=WORKSPACE_HEADERS,
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "The stored Supabase credential could not be loaded."
+    )
+
+
+@pytest.mark.anyio
+async def test_list_tables_returns_not_found_before_calling_supabase(
+    api: tuple[AsyncClient, FakeConnectionManager],
+) -> None:
+    client, manager = api
+    response = await client.get(
+        "/api/v1/supabase/connections/missing/tables",
+        headers=WORKSPACE_HEADERS,
+    )
+
+    assert response.status_code == 404
+    assert not any(call[0] == "list_tables" for call in manager.calls)
 
 
 @pytest.mark.anyio
