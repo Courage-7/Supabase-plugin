@@ -1,56 +1,77 @@
 # Supabase Connection Manager
 
-This handles the backend connection lifecycle, but it does not create the frontend credentials form; that form should submit credentials to this module and store only the returned `connection_id`.
-
-[Download the Python script](sandbox:/workspace/scratch/3d9970b078fe/supabase_connection_manager.py)
+Backend-only FastAPI service for testing, encrypting, and storing Supabase
+connections. SQLite is the local credential store for this phase; clients keep
+only the returned connection and workspace IDs.
 
 It includes:
 
-- Secret-key and project-URL validation
-- Supabase connection testing
+- Supabase secret-key and project-URL validation
+- Connection testing before persistence
 - Fernet encryption at rest
-- SQLite storage for an MVP
-- Workspace-level connection isolation
-- Safe connection listing without exposing keys
-- Key rotation
-- Reusable `get_supabase_client()` method
+- SQLite storage in `workflow_connections.db`
+- Workspace-scoped connection listing and retrieval
+- Secret-key rotation without returning plaintext keys
 - SSRF and redirect protection
-- CLI commands for testing
 
-## Run it on Windows
+## Local setup
+
+Install the locked dependencies:
 
 ```powershell
-uv add cryptography supabase
+uv sync
 ```
 
-Generate your encryption key:
+Generate a persistent backend encryption key:
 
 ```powershell
 uv run python supabase_connection_manager.py generate-key
 ```
 
-Set the generated key:
+Store the generated value in the ignored `.env` file:
 
-```powershell
-$env:WORKFLOW_CREDENTIAL_ENCRYPTION_KEY = AEu1jPsXNhGV6SqGelM5jGhf7EbDr5cDk1BywHPVXqI
+```dotenv
+WORKFLOW_CREDENTIAL_ENCRYPTION_KEY="replace-with-the-generated-key"
+# Optional: WORKFLOW_CONNECTION_DATABASE="workflow_connections.db"
 ```
 
-Test credentials without saving:
+The API loads this local `.env` automatically and does not replace environment
+variables already supplied by the host. Start it with:
 
 ```powershell
-uv run python supabase_connection_manager.py test
+uv run uvicorn main:app --reload
 ```
 
-Save a tested connection:
+## Create and save a connection
 
-```powershell
-uv run python supabase_connection_manager.py add
+`POST /api/v1/supabase/connections` tests the credentials, encrypts the secret,
+commits the record to SQLite, and returns `201 Created`. The workspace header is
+optional on this endpoint:
+
+- Omit `X-Workspace-ID` to generate a new workspace UUID.
+- Supply a nonblank `X-Workspace-ID` to add the connection to an existing
+  workspace.
+- An explicitly blank header returns `422` and nothing is saved.
+
+The response includes `id` and `workspace_id`, but never includes `secret_key`.
+Persist the returned `workspace_id` in the caller and send it on later requests:
+
+```http
+GET /api/v1/supabase/connections
+X-Workspace-ID: returned-workspace-id
 ```
 
-List saved connections:
+Listing, retrieving, and rotating stored connections continue to require the
+workspace header. If credential testing or storage configuration fails, the
+connection is not inserted.
 
-```powershell
-uv run python supabase_connection_manager.py list
-```
+## Storage notes
 
-The Supabase key is requested through a hidden terminal prompt and never supplied as a command argument.
+The default database path is `workflow_connections.db`, relative to the server's
+working directory. Set `WORKFLOW_CONNECTION_DATABASE` to use another SQLite
+path. Keep `WORKFLOW_CREDENTIAL_ENCRYPTION_KEY` stable: changing or losing it
+makes existing encrypted credentials unreadable.
+
+For production, use a backend secret manager for the encryption key and derive
+workspace scope from authenticated tenant context instead of trusting a public
+client header.

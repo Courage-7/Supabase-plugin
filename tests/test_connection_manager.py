@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import ssl
 from pathlib import Path
 
@@ -7,8 +8,11 @@ import pytest
 from cryptography.fernet import Fernet
 
 from supabase_connection_manager import (
+    ENCRYPTION_KEY_ENV,
+    ConnectionTestResult,
     SupabaseConnectionError,
     SupabaseConnectionManager,
+    SupabaseCredentialError,
 )
 
 
@@ -107,3 +111,87 @@ def test_ssl_context_requires_authenticated_tls_1_2_or_newer(
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname is True
     assert context.minimum_version == ssl.TLSVersion.TLSv1_2
+
+
+def test_create_connection_encrypts_and_persists_credentials_in_sqlite(
+    manager: SupabaseConnectionManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret_key = "sb_secret_" + "a" * 32
+
+    def successful_test(project_url: str, supplied_key: str) -> ConnectionTestResult:
+        assert supplied_key == secret_key
+        return ConnectionTestResult(
+            ok=True,
+            message="Supabase connection successful.",
+            status_code=200,
+            project_url=project_url,
+            tested_at="2026-08-03T12:00:00+00:00",
+        )
+
+    monkeypatch.setattr(manager, "test_connection", successful_test)
+
+    record = manager.create_connection(
+        workspace_id="workspace-1",
+        name="Production",
+        project_url="http://localhost:54321",
+        secret_key=secret_key,
+    )
+
+    with sqlite3.connect(manager.database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT workspace_id, encrypted_secret
+            FROM workflow_connections
+            WHERE id = ?
+            """,
+            (record.id,),
+        ).fetchone()
+
+    assert row is not None
+    assert row[0] == "workspace-1"
+    assert isinstance(row[1], bytes)
+    assert secret_key.encode("utf-8") not in row[1]
+    assert manager.get_credentials(
+        record.id,
+        workspace_id="workspace-1",
+    ).secret_key == secret_key
+    assert manager.list_connections(workspace_id="workspace-1") == [record]
+
+
+def test_failed_connection_test_does_not_insert_sqlite_row(
+    manager: SupabaseConnectionManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def failed_test(project_url: str, secret_key: str) -> ConnectionTestResult:
+        raise SupabaseConnectionError("Supabase rejected the secret key.")
+
+    monkeypatch.setattr(manager, "test_connection", failed_test)
+
+    with pytest.raises(SupabaseConnectionError, match="rejected"):
+        manager.create_connection(
+            workspace_id="workspace-1",
+            name="Production",
+            project_url="http://localhost:54321",
+            secret_key="sb_secret_" + "a" * 32,
+        )
+
+    with sqlite3.connect(manager.database_path) as connection:
+        row_count = connection.execute(
+            "SELECT COUNT(*) FROM workflow_connections"
+        ).fetchone()[0]
+
+    assert row_count == 0
+
+
+def test_missing_encryption_configuration_does_not_create_sqlite_database(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database_path = tmp_path / "unconfigured.db"
+    monkeypatch.delenv(ENCRYPTION_KEY_ENV, raising=False)
+
+    with pytest.raises(SupabaseCredentialError, match=ENCRYPTION_KEY_ENV):
+        SupabaseConnectionManager(database_path)
+
+    assert not database_path.exists()

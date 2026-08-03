@@ -6,6 +6,7 @@ import os
 from dataclasses import asdict
 from functools import lru_cache
 from typing import Annotated, NoReturn
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
@@ -99,8 +100,26 @@ def get_workspace_id(
     return workspace_id
 
 
+def get_or_create_workspace_id(
+    x_workspace_id: Annotated[str | None, Header(alias="X-Workspace-ID")] = None,
+) -> str:
+    """Reuse the caller's workspace scope or create one for a new local setup."""
+
+    if x_workspace_id is None:
+        return str(uuid4())
+
+    workspace_id = x_workspace_id.strip()
+    if not workspace_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="X-Workspace-ID cannot be blank.",
+        )
+    return workspace_id
+
+
 ManagerDependency = Annotated[SupabaseConnectionManager, Depends(get_connection_manager)]
 WorkspaceDependency = Annotated[str, Depends(get_workspace_id)]
+CreateWorkspaceDependency = Annotated[str, Depends(get_or_create_workspace_id)]
 
 
 router = APIRouter(
@@ -144,7 +163,7 @@ def test_connection(
 @router.post("", response_model=ConnectionResponse, status_code=status.HTTP_201_CREATED)
 def create_connection(
     request: CreateConnectionRequest,
-    workspace_id: WorkspaceDependency,
+    workspace_id: CreateWorkspaceDependency,
     manager: ManagerDependency,
 ) -> ConnectionResponse:
     """Test, encrypt, and store a connection in one workspace."""
