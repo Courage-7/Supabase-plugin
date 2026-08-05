@@ -12,7 +12,7 @@ It includes:
 - SQLite storage in `workflow_connections.db`
 - Workspace-scoped connection listing and retrieval
 - Secret-key rotation without returning plaintext keys
-- SSRF and redirect protection
+- SSRF and redirect protection.
 
 ## Local setup
 
