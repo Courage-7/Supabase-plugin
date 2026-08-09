@@ -25,7 +25,7 @@ def create_app() -> FastAPI:
 
     load_local_environment()
     application = FastAPI(
-        title="Supabase Connection Manager",
+        title="Supabase Connector",
         version="0.1.0",
         description="Backend-only API for testing and storing Supabase connections.",
     )
