@@ -5,7 +5,6 @@ connections. SQLite is the local credential store for this phase; clients keep
 only the returned connection and workspace IDs.
 
 It includes:
-
 - Supabase secret-key and project-URL validation
 - Connection testing before persistence
 - Fernet encryption at rest
