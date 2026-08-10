@@ -15,7 +15,7 @@ It includes:
 
 ## Local setup
 
-Install the locked dependencies:
+Install the locked dependencies.
 
 ```powershell
 uv sync
