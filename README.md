@@ -1,4 +1,4 @@
-# Supabase Connection Manager
+# Supabase Connection Manager / Plugin
 
 Backend-only FastAPI service for testing, encrypting, and storing Supabase
 connections. SQLite is the local credential store for this phase; clients keep
